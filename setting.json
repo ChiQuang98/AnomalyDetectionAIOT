@@ -1,0 +1,20 @@
+{
+  "GlogConfig": {
+    "MaxSize": 256,
+    "V": 8
+  },
+  "RestfulApiPort": 8001,
+  "RestfulApiHost": "0.0.0.0",
+  "KafkaInfo":{
+    "ServerAddress1": "10.16.150.138:9002",
+    "ServerAddress2": "10.16.150.139:9002",
+    "ServerAddress3": "10.16.150.140:9002"
+  },
+  "NatsInfo": {
+    "Host": "10.16.150.132:4222"
+  },
+  "KSQLInfo": {
+    "Host": "192.168.136.134:8088"
+  }
+}
+
