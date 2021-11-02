@@ -2,6 +2,7 @@ package main
 
 import (
 	"AnomalyDetection/routers"
+	"AnomalyDetection/utils"
 	"AnomalyDetection/utils/setting"
 	"AnomalyDetection/workers"
 	"flag"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -58,6 +60,14 @@ func natsErrHandler(nc *nats.Conn, sub *nats.Subscription, natsErr error) {
 func main() {
 	flag.Parse()
 	glog.Info("Init Redis database...")
+
+	ip,err := utils.ResolveHostIp()
+	if err !=nil{
+		return
+	}
+	var groupIDKafka = 	fmt.Sprintf("AnomalyLogsGroup_%s",ip)
+	hosts := []string{"10.16.150.138", "10.16.150.139", "10.16.150.140"}
+	brokers:=utils.SetBroker(hosts,9002)
 	//var channelsTmp []models.Channel
 	var wg sync.WaitGroup
 	//Nats
@@ -83,15 +93,19 @@ func main() {
 	//vi` moi worker lam viec khong ket thuc, phai lang ng  he lien tuc nen so luong worker bang so luong channel
 	killsignalKafka := workers.GetKillSignalChannelKafka()
 	killsignalNats:= workers.GetKillSignalChannelNats()
+	killsignalKafkafconsumerAnomaly:= workers.GetKillSignalKafkaConsumerAnomaly()
 	fmt.Println("Start")
 	wg.Add(1)
 	go func() {
 		for job:= range jobs{
 			glog.Error("a job created " + job.ChannelID)
-			wg.Add(3)
+			wg.Add(4)
+			topicAnomalyTable:=fmt.Sprintf("%sTABLEANOMALY3SECONDS",strings.ReplaceAll(strings.ToUpper(job.ChannelID),"-",""))
+			fmt.Println(topicAnomalyTable)
 			go workers.WorkerNats(job.ChannelID, job.ChannelID, result,nc,killsignalNats,&wg,clientKSQL)
 			go workers.WorkerKafkaProducer(job.ChannelID,result,killsignalKafka,&wg)
 			go workers.WorkerCreateStreamKSQL(job,clientKSQL,&wg)
+			go workers.WorkerKafkaConsumerAnomalyTable(topicAnomalyTable,topicAnomalyTable,brokers,groupIDKafka,killsignalKafkafconsumerAnomaly,&wg)
 		}
 	}()
 	routerApi := routers.InitRoutes()

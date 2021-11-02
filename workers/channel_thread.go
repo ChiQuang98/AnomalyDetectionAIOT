@@ -5,6 +5,7 @@ var JobsChannelCfg chan models.AnomalyChannel
 var Result chan models.MessageNats
 var KillsignalKafka chan string
 var KillsignalNats chan string
+var KillsignalKafkaConsumerAnomaly chan string
 func init() {
 	// queue of jobs
 	JobsChannelCfg = make(chan models.AnomalyChannel)
@@ -15,6 +16,7 @@ func init() {
 	//vi` moi worker lam viec khong ket thuc, phai lang ng  he lien tuc nen so luong worker bang so luong channel
 	KillsignalKafka = make(chan string)
 	KillsignalNats = make(chan string)
+	KillsignalKafkaConsumerAnomaly = make(chan string)
 }
 func PushJobToChannel(job models.AnomalyChannel)  {
 	JobsChannelCfg <- job
@@ -24,6 +26,9 @@ func PushResultNatsKafka(result models.MessageNats)  {
 }
 func PushKillSignalChannelKafka(topicKill string)  {
 	KillsignalKafka <- topicKill
+}
+func PushKillSignalKafkaConsumerAnomaly(topicKill string)  {
+	KillsignalKafkaConsumerAnomaly <- topicKill
 }
 func PushKillSignalChannelNats(topicKill string)  {
 	KillsignalNats <- topicKill
@@ -48,4 +53,7 @@ func GetKillSignalChannelKafka() chan string {
 }
 func GetKillSignalChannelNats() chan string {
 	return KillsignalNats
+}
+func GetKillSignalKafkaConsumerAnomaly() chan string {
+	return KillsignalKafkaConsumerAnomaly
 }

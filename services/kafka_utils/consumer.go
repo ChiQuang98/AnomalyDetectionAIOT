@@ -1,4 +1,4 @@
-package kafka
+package kafka_utils
 
 import (
 	"AnomalyDetection/utils"
