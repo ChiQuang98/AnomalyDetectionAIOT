@@ -4,9 +4,15 @@ import (
 	"encoding/json"
 	"github.com/gogo/protobuf/proto"
 )
+//type AnomalyChannel struct {
+//	ID string `json:"id"`
+//	ChannelID string `json:"channel_id"`
+//	Option int `json:"option"`
+//	Type int `json:"type"`
+//}
 type AnomalyChannel struct {
 	ID string `json:"id"`
-	ChannelID string `json:"channel_id"`
+	ChannelID []string `json:"channel_id"`
 	Option int `json:"option"`
 	Type int `json:"type"`
 }

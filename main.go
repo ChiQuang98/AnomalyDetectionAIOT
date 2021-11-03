@@ -16,7 +16,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -50,17 +49,10 @@ func natsErrHandler(nc *nats.Conn, sub *nats.Subscription, natsErr error) {
 	}
 	// check for other errors
 }
-
-// Set the error handler when creating a connection.
-
-//var channelsAtomic struct {
-//	sync.Mutex
-//	channels []models.Channel
-//}
 func main() {
 	flag.Parse()
 	glog.Info("Init Redis database...")
-
+	wg:=workers.GetWaitGroup()
 	ip,err := utils.ResolveHostIp()
 	if err !=nil{
 		return
@@ -68,9 +60,6 @@ func main() {
 	var groupIDKafka = 	fmt.Sprintf("AnomalyLogsGroup_%s",ip)
 	hosts := []string{"10.16.150.138", "10.16.150.139", "10.16.150.140"}
 	brokers:=utils.SetBroker(hosts,9002)
-	//var channelsTmp []models.Channel
-	var wg sync.WaitGroup
-	//Nats
 	//servers := []string{"aiot-app01:31422", "aiot-app02:31422", "aiot-app03:31422"}
 	//servers := []string{"10.16.150.138:31422", "10.16.150.139:31422", "10.16.150.140:31422"}
 	nc, err := nats.Connect(setting.GetNatsInfo().Host,nats.ErrorHandler(natsErrHandler),nats.PingInterval(20*time.Second), nats.MaxPingsOutstanding(5))
@@ -89,8 +78,6 @@ func main() {
 	jobs := workers.GetJobsChannel()
 	// done channel lấy ra kết quả của jobs
 	result := workers.GetResultChannel()
-	// số lượng worker trong pool
-	//vi` moi worker lam viec khong ket thuc, phai lang ng  he lien tuc nen so luong worker bang so luong channel
 	killsignalKafka := workers.GetKillSignalChannelKafka()
 	killsignalNats:= workers.GetKillSignalChannelNats()
 	killsignalKafkafconsumerAnomaly:= workers.GetKillSignalKafkaConsumerAnomaly()
@@ -98,14 +85,14 @@ func main() {
 	wg.Add(1)
 	go func() {
 		for job:= range jobs{
-			glog.Error("a job created " + job.ChannelID)
-			wg.Add(4)
-			topicAnomalyTable:=fmt.Sprintf("%sTABLEANOMALY3SECONDS",strings.ReplaceAll(strings.ToUpper(job.ChannelID),"-",""))
-			fmt.Println(topicAnomalyTable)
-			go workers.WorkerNats(job.ChannelID, job.ChannelID, result,nc,killsignalNats,&wg,clientKSQL)
-			go workers.WorkerKafkaProducer(job.ChannelID,result,killsignalKafka,&wg)
-			go workers.WorkerCreateStreamKSQL(job,clientKSQL,&wg)
-			go workers.WorkerKafkaConsumerAnomalyTable(topicAnomalyTable,topicAnomalyTable,brokers,groupIDKafka,killsignalKafkafconsumerAnomaly,&wg)
+			for _,channelTopic:= range job.ChannelID{
+				wg.Add(4)
+				topicAnomalyTable:=fmt.Sprintf("%sTABLEANOMALY3SECONDS",strings.ReplaceAll(strings.ToUpper(channelTopic),"-",""))
+				go workers.WorkerNats(channelTopic, channelTopic, result,nc,killsignalNats,&wg,clientKSQL)
+				go workers.WorkerKafkaProducer(channelTopic,result,killsignalKafka,&wg)
+				go workers.WorkerCreateStreamKSQL(job,clientKSQL,&wg)
+				go workers.WorkerKafkaConsumerAnomalyTable(topicAnomalyTable,topicAnomalyTable,brokers,groupIDKafka,killsignalKafkafconsumerAnomaly,&wg)
+			}
 		}
 	}()
 	routerApi := routers.InitRoutes()

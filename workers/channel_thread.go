@@ -1,11 +1,19 @@
 package workers
 
-import "AnomalyDetection/models"
+import (
+	"AnomalyDetection/models"
+	"sync"
+)
 var JobsChannelCfg chan models.AnomalyChannel
 var Result chan models.MessageNats
 var KillsignalKafka chan string
 var KillsignalNats chan string
 var KillsignalKafkaConsumerAnomaly chan string
+var wg sync.WaitGroup
+
+func GetWaitGroup() sync.WaitGroup {
+	return wg
+}
 func init() {
 	// queue of jobs
 	JobsChannelCfg = make(chan models.AnomalyChannel)
@@ -24,14 +32,17 @@ func PushJobToChannel(job models.AnomalyChannel)  {
 func PushResultNatsKafka(result models.MessageNats)  {
 	Result <- result
 }
-func PushKillSignalChannelKafka(topicKill string)  {
+func PushKillSignalChannelKafka(topicKill string,wg *sync.WaitGroup)  {
 	KillsignalKafka <- topicKill
+	wg.Done()
 }
-func PushKillSignalKafkaConsumerAnomaly(topicKill string)  {
+func PushKillSignalKafkaConsumerAnomaly(topicKill string,wg *sync.WaitGroup)  {
 	KillsignalKafkaConsumerAnomaly <- topicKill
+	wg.Done()
 }
-func PushKillSignalChannelNats(topicKill string)  {
+func PushKillSignalChannelNats(topicKill string,wg *sync.WaitGroup)  {
 	KillsignalNats <- topicKill
+	wg.Done()
 }
 func PollKillSignalChannelKafka() string {
 	return <- KillsignalKafka
