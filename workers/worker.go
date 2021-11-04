@@ -3,6 +3,7 @@ package workers
 import (
 	"AnomalyDetection/models"
 	"AnomalyDetection/services/kafka_utils"
+	"AnomalyDetection/services/ksql_utils"
 	"AnomalyDetection/utils"
 	"encoding/json"
 	"fmt"
@@ -26,7 +27,15 @@ func WorkerKafkaProducer(topikKillSig string,result chan models.MessageNats,ks c
 			//topic := strings.ReplaceAll(strings.ToUpper(msgNats.IdChannel),"-","")
 			topic := strings.ToUpper(msgNats.IdChannel)
 			topicKill = topic
-			jsonSenMl:= models.JSONSenML{Valueksql: json.RawMessage(msgNats.MessageData)}
+			var senMLarray []models.SenML
+			err:= json.Unmarshal([]byte(msgNats.MessageData),&senMLarray)
+			if err!=nil{
+				glog.Error(err)
+			}
+			for index,senML:= range senMLarray{
+				senMLarray[index].N = senML.N +"_"+ topic
+			}
+			jsonSenMl:= models.JSONSenML{Valueksql: senMLarray}
 			s,_:=json.Marshal(jsonSenMl)
 			println(string(s))
 			//println(string(s))
@@ -42,21 +51,42 @@ func WorkerKafkaProducer(topikKillSig string,result chan models.MessageNats,ks c
 		}
 	}
 }
-func WorkerNats(job  string, worknumber string, result chan models.MessageNats,nc *nats.Conn,ks chan string,wg *sync.WaitGroup,clientKSQL *ksqldb.Client) {
+func WorkerNats(id,job  string, worknumber string, result chan models.MessageNats,nc *nats.Conn,ks chan string,wg *sync.WaitGroup,clientKSQL *ksqldb.Client) {
 	topicKill := job
-	streamOriginalName:=strings.ReplaceAll(strings.ToUpper(job),"-","")
+	p:= kafka_utils.GetProducer()
+	//streamOriginalName:=strings.ReplaceAll(strings.ToUpper(job),"-","")
 	subNats, err := nc.QueueSubscribe("channels."+job,job, func(m *nats.Msg){
 		var message models.Message
 		err:=proto.Unmarshal(m.Data,&message)
-		if err == nil{
-			result <- models.MessageNats{
-				IdChannel:   job,
-				MessageData: message.Payload,
-			}
-		} else {
+		if err != nil{
+			//result <- models.MessageNats{
+			//	IdChannel:   job,
+			//	MessageData: message.Payload,
+			//}
 			fmt.Println(err)
+		} else {
+			glog.Info(fmt.Sprintf("Received data from topic %s Nats",job))
+			var senMLarray []models.SenML
+			err:= json.Unmarshal([]byte( message.Payload),&senMLarray)
+			if err!=nil{
+				glog.Error(err)
+			}
+			for index,senML:= range senMLarray{
+				//senMLarray[index].N = senML.N +"_"+ job
+				senMLarray[index].Channel = job
+				senMLarray[index].Key = senML.N+"_"+id+"_"+job
+			}
+			jsonSenMl:= models.JSONSenML{Valueksql: senMLarray}
+			s,_:=json.Marshal(jsonSenMl)
+			println(string(s))
+			//println(string(s))
+			kafka_utils.PublishMessage(s,job,p)
+			glog.Info("Tranfered data to topic %s kafka ",job)
 		}
-		glog.Info(fmt.Sprintf("Received data from topic %s Nats",job))
+
+
+
+
 	});
 	if(err!=nil){
 		glog.Error(err)
@@ -67,28 +97,70 @@ func WorkerNats(job  string, worknumber string, result chan models.MessageNats,n
 		select {
 		case signalKill:=<-ks:
 			if signalKill == topicKill {
-				glog.Info(fmt.Sprintf("Worker %s killed Nats: ",signalKill))
-				//Khi nhan duoc lenh k theo doi, thi kill het stream va table cua channel da tao
-				err:= clientKSQL.Execute(fmt.Sprintf("DROP TABLE %sTABLEANOMALY3SECONDS;",streamOriginalName))
-				if err!=nil{
-					glog.Error("Drop Table Err: ",err)
-				}
-				glog.Info(fmt.Sprintf("DROP TABLE %sTABLEANOMALY3SECONDS;",streamOriginalName))
-				err = clientKSQL.Execute(fmt.Sprintf("DROP STREAM %sEXPLODE;",streamOriginalName))
-				if err!=nil{
-					glog.Error("Drop Stream Err: ",err)
-				}
-				glog.Info(fmt.Sprintf("DROP STREAM %sEXPLODE",streamOriginalName))
-				err = clientKSQL.Execute(fmt.Sprintf("DROP STREAM %sORIGINAL;",streamOriginalName))
-				if err !=nil{
-					glog.Error("Drop Stream Err: ",err)
-				}
-				glog.Info((fmt.Sprintf("DROP STREAM %sORIGINAL",streamOriginalName)))
+
+				//glog.Info(fmt.Sprintf("Worker %s killed Nats: ",signalKill))
+				////Khi nhan duoc lenh k theo doi, thi kill het stream va table cua channel da tao
+				//err:= clientKSQL.Execute(fmt.Sprintf("DROP TABLE %sTABLEANOMALY3SECONDS;",streamOriginalName))
+				//if err!=nil{
+				//	glog.Error("Drop Table Err: ",err)
+				//}
+				//glog.Info(fmt.Sprintf("DROP TABLE %sTABLEANOMALY3SECONDS;",streamOriginalName))
+				//err = clientKSQL.Execute(fmt.Sprintf("DROP STREAM %sEXPLODE;",streamOriginalName))
+				//if err!=nil{
+				//	glog.Error("Drop Stream Err: ",err)
+				//}
+				//glog.Info(fmt.Sprintf("DROP STREAM %sEXPLODE",streamOriginalName))
+				//err = clientKSQL.Execute(fmt.Sprintf("DROP STREAM %sORIGINAL;",streamOriginalName))
+				//if err !=nil{
+				//	glog.Error("Drop Stream Err: ",err)
+				//}
+				//glog.Info((fmt.Sprintf("DROP STREAM %sORIGINAL",streamOriginalName)))
 				return
 			}
 		}
 	}
 }
+//func WorkerCreateStreamKSQL(channelCfg models.AnomalyChannel,clientKSQL *ksqldb.Client,wg *sync.WaitGroup)  {
+//	defer wg.Done()
+//	defer glog.Info("DONE CREATE STREAMS KSQL")
+//	for _,channelTopic:= range channelCfg.ChannelID{
+//		streamOriginalName:=strings.ReplaceAll(strings.ToUpper(channelTopic),"-","")
+//		streamOriginalQuery:=fmt.Sprintf("CREATE STREAM %sORIGINAL (valueksql ARRAY<STRUCT<n VARCHAR, u VARCHAR, v VARCHAR, t VARCHAR>>)" +
+//			" WITH (KAFKA_TOPIC='%s', KEY_FORMAT='KAFKA', PARTITIONS=5, REPLICAS=2, VALUE_FORMAT='JSON');",streamOriginalName,strings.ToUpper(channelTopic))
+//		err := clientKSQL.Execute(streamOriginalQuery)
+//		if err!=nil{
+//			glog.Error(err)
+//			return
+//		} else {//neu tao stream dau thanh cong, explode ra stream de count
+//			glog.Info("First Stream created")
+//			explodeStreamQuery:= fmt.Sprintf("CREATE STREAM %sEXPLODE as SELECT " +
+//				"EXPLODE(valueksql)->n AS n, " +
+//				"EXPLODE(valueksql)->u AS u, " +
+//				"EXPLODE(valueksql)->v AS v, " +
+//				"EXPLODE(valueksql)->t AS t " +
+//				"FROM %sORIGINAL EMIT CHANGES;",streamOriginalName,streamOriginalName)
+//			err = clientKSQL.Execute(explodeStreamQuery)
+//			if err!=nil{
+//				glog.Error(err)
+//				clientKSQL.Execute(fmt.Sprintf("DROP STREAM %sORIGINAL",streamOriginalName))
+//				return
+//			} else{
+//				glog.Info("Second Stream created")
+//				tableAnomalyDetectionQuery:= fmt.Sprintf("CREATE TABLE %sTABLEANOMALY3SECONDS AS SELECT N,COUNT(*) AS TOTAL " +
+//					"FROM %sEXPLODE WINDOW TUMBLING (SIZE %d SECONDS) GROUP BY N  HAVING COUNT(*) >%d;",streamOriginalName,streamOriginalName,20,3)
+//				err = clientKSQL.Execute(tableAnomalyDetectionQuery)
+//				if err!=nil{
+//					glog.Error(err)
+//					clientKSQL.Execute(fmt.Sprintf("DROP STREAM %sEXPLODE",streamOriginalName))
+//					return
+//				} else {
+//					glog.Info("Table anomaly created")
+//				}
+//			}
+//		}
+//	}
+//
+//}
 func WorkerCreateStreamKSQL(channelCfg models.AnomalyChannel,clientKSQL *ksqldb.Client,wg *sync.WaitGroup)  {
 	defer wg.Done()
 	defer glog.Info("DONE CREATE STREAMS KSQL")
@@ -96,7 +168,7 @@ func WorkerCreateStreamKSQL(channelCfg models.AnomalyChannel,clientKSQL *ksqldb.
 		streamOriginalName:=strings.ReplaceAll(strings.ToUpper(channelTopic),"-","")
 		streamOriginalQuery:=fmt.Sprintf("CREATE STREAM %sORIGINAL (valueksql ARRAY<STRUCT<n VARCHAR, u VARCHAR, v VARCHAR, t VARCHAR>>)" +
 			" WITH (KAFKA_TOPIC='%s', KEY_FORMAT='KAFKA', PARTITIONS=5, REPLICAS=2, VALUE_FORMAT='JSON');",streamOriginalName,strings.ToUpper(channelTopic))
-		err := clientKSQL.Execute(streamOriginalQuery)
+		err := ksql_utils.ExecuteStatement(streamOriginalQuery)
 		if err!=nil{
 			glog.Error(err)
 			return
@@ -108,7 +180,7 @@ func WorkerCreateStreamKSQL(channelCfg models.AnomalyChannel,clientKSQL *ksqldb.
 				"EXPLODE(valueksql)->v AS v, " +
 				"EXPLODE(valueksql)->t AS t " +
 				"FROM %sORIGINAL EMIT CHANGES;",streamOriginalName,streamOriginalName)
-			err = clientKSQL.Execute(explodeStreamQuery)
+			err = ksql_utils.ExecuteStatement(explodeStreamQuery)
 			if err!=nil{
 				glog.Error(err)
 				clientKSQL.Execute(fmt.Sprintf("DROP STREAM %sORIGINAL",streamOriginalName))
@@ -117,7 +189,7 @@ func WorkerCreateStreamKSQL(channelCfg models.AnomalyChannel,clientKSQL *ksqldb.
 				glog.Info("Second Stream created")
 				tableAnomalyDetectionQuery:= fmt.Sprintf("CREATE TABLE %sTABLEANOMALY3SECONDS AS SELECT N,COUNT(*) AS TOTAL " +
 					"FROM %sEXPLODE WINDOW TUMBLING (SIZE %d SECONDS) GROUP BY N  HAVING COUNT(*) >%d;",streamOriginalName,streamOriginalName,20,3)
-				err = clientKSQL.Execute(tableAnomalyDetectionQuery)
+				err = ksql_utils.ExecuteStatement(tableAnomalyDetectionQuery)
 				if err!=nil{
 					glog.Error(err)
 					clientKSQL.Execute(fmt.Sprintf("DROP STREAM %sEXPLODE",streamOriginalName))

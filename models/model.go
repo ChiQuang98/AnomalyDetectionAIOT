@@ -10,6 +10,22 @@ import (
 //	Option int `json:"option"`
 //	Type int `json:"type"`
 //}
+type KSQLBody struct {
+	KSQL string `json:"ksql"`
+	StreamsProperties StreamsProperties `json:"streamsProperties"`
+}
+type SenML struct {
+	Channel string `json:"channel"`
+	Key string `json:"key"`
+	N string `json:"n"`
+	U string `json:"u"`
+	V json.Number `json:"v"`
+	T json.Number `json:"t"`
+	BN string `json:"bn"`
+}
+type StreamsProperties struct {
+	KSQLOffsetReset string `json:"ksql.streams.auto.offset.reset"`
+}
 type AnomalyChannel struct {
 	ID string `json:"id"`
 	ChannelID []string `json:"channel_id"`
@@ -30,7 +46,7 @@ type Channel struct {
 	Thing_key string `json:"thing_key"`
 }
 type JSONSenML struct {
-	Valueksql json.RawMessage `json:"valueksql"`
+	Valueksql []SenML `json:"valueksql"`
 }
 type ResponseChannel struct {
 	Total int `json:"total"`
