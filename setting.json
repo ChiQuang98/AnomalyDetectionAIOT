@@ -3,7 +3,7 @@
     "MaxSize": 256,
     "V": 8
   },
-  "RestfulApiPort": 8001,
+  "RestfulApiPort": 8002,
   "RestfulApiHost": "0.0.0.0",
   "KafkaInfo":{
     "ServerAddress1": "10.16.150.138:9002",

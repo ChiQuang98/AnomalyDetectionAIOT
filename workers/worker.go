@@ -5,15 +5,18 @@ import (
 	"AnomalyDetection/services/kafka_utils"
 	"AnomalyDetection/services/ksql_utils"
 	"AnomalyDetection/utils"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/glog"
+	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/rmoff/ksqldb-go"
 	"strings"
 	"sync"
+	"time"
 )
 var total uint64
 func WorkerKafkaProducer(topikKillSig string,result chan models.MessageNats,ks chan string,wg *sync.WaitGroup){
@@ -80,12 +83,9 @@ func WorkerNats(id,job  string, worknumber string, result chan models.MessageNat
 			s,_:=json.Marshal(jsonSenMl)
 			println(string(s))
 			//println(string(s))
-			kafka_utils.PublishMessage(s,job,p)
-			glog.Info("Tranfered data to topic %s kafka ",job)
+			kafka_utils.PublishMessage(s,"ANOMALYTOPIC1",p)
+			glog.Info("Tranfered data to topic %s kafka ","ANOMALYTOPIC1")
 		}
-
-
-
 
 	});
 	if(err!=nil){
@@ -97,7 +97,7 @@ func WorkerNats(id,job  string, worknumber string, result chan models.MessageNat
 		select {
 		case signalKill:=<-ks:
 			if signalKill == topicKill {
-
+				glog.Info("Killed worker nats")
 				//glog.Info(fmt.Sprintf("Worker %s killed Nats: ",signalKill))
 				////Khi nhan duoc lenh k theo doi, thi kill het stream va table cua channel da tao
 				//err:= clientKSQL.Execute(fmt.Sprintf("DROP TABLE %sTABLEANOMALY3SECONDS;",streamOriginalName))
@@ -161,48 +161,47 @@ func WorkerNats(id,job  string, worknumber string, result chan models.MessageNat
 //	}
 //
 //}
-func WorkerCreateStreamKSQL(channelCfg models.AnomalyChannel,clientKSQL *ksqldb.Client,wg *sync.WaitGroup)  {
+func WorkerCreateStreamKSQL(topic string,clientKSQL *ksqldb.Client,wg *sync.WaitGroup)  {
 	defer wg.Done()
 	defer glog.Info("DONE CREATE STREAMS KSQL")
-	for _,channelTopic:= range channelCfg.ChannelID{
-		streamOriginalName:=strings.ReplaceAll(strings.ToUpper(channelTopic),"-","")
-		streamOriginalQuery:=fmt.Sprintf("CREATE STREAM %sORIGINAL (valueksql ARRAY<STRUCT<n VARCHAR, u VARCHAR, v VARCHAR, t VARCHAR>>)" +
-			" WITH (KAFKA_TOPIC='%s', KEY_FORMAT='KAFKA', PARTITIONS=5, REPLICAS=2, VALUE_FORMAT='JSON');",streamOriginalName,strings.ToUpper(channelTopic))
-		err := ksql_utils.ExecuteStatement(streamOriginalQuery)
+	streamOriginalName:=strings.ReplaceAll(strings.ToUpper(topic),"-","")
+	streamOriginalQuery:=fmt.Sprintf("CREATE STREAM %sORIGINAL(valueksql ARRAY<STRUCT<channel VARCHAR,key VARCHAR,n VARCHAR,u VARCHAR,v VARCHAR,t VARCHAR>>)" +
+		" WITH (KAFKA_TOPIC='%s', VALUE_FORMAT='JSON');",streamOriginalName,strings.ToUpper(topic))
+	err := ksql_utils.ExecuteStatement(streamOriginalQuery)
+	if err!=nil{
+		glog.Error(err)
+		return
+	} else {//neu tao stream dau thanh cong, explode ra stream de count
+		glog.Info("First Stream created")
+		explodeStreamQuery:= fmt.Sprintf("CREATE STREAM %sEXPLODE as SELECT " +
+			"EXPLODE(valueksql)->channel AS channel, " +
+			"EXPLODE(valueksql)->key AS key, " +
+			"EXPLODE(valueksql)->n AS n, " +
+			"EXPLODE(valueksql)->u AS u, " +
+			"EXPLODE(valueksql)->v AS v," +
+			"EXPLODE(valueksql)->t AS t FROM %sORIGINAL EMIT CHANGES;",streamOriginalName,streamOriginalName)
+		err = ksql_utils.ExecuteStatement(explodeStreamQuery)
 		if err!=nil{
 			glog.Error(err)
+			clientKSQL.Execute(fmt.Sprintf("DROP STREAM %sORIGINAL",streamOriginalName))
 			return
-		} else {//neu tao stream dau thanh cong, explode ra stream de count
-			glog.Info("First Stream created")
-			explodeStreamQuery:= fmt.Sprintf("CREATE STREAM %sEXPLODE as SELECT " +
-				"EXPLODE(valueksql)->n AS n, " +
-				"EXPLODE(valueksql)->u AS u, " +
-				"EXPLODE(valueksql)->v AS v, " +
-				"EXPLODE(valueksql)->t AS t " +
-				"FROM %sORIGINAL EMIT CHANGES;",streamOriginalName,streamOriginalName)
-			err = ksql_utils.ExecuteStatement(explodeStreamQuery)
+		} else{
+			glog.Info("Second Stream created")
+			tableAnomalyDetectionQuery:= fmt.Sprintf("CREATE TABLE %sTABLEANOMALY3SECONDS AS SELECT KEY,COUNT(*) AS TOTAL " +
+				"FROM %sEXPLODE WINDOW TUMBLING (SIZE %d SECONDS) GROUP BY KEY  HAVING COUNT(*) >%d;",streamOriginalName,streamOriginalName,20,3)
+			err = ksql_utils.ExecuteStatement(tableAnomalyDetectionQuery)
 			if err!=nil{
 				glog.Error(err)
-				clientKSQL.Execute(fmt.Sprintf("DROP STREAM %sORIGINAL",streamOriginalName))
+				clientKSQL.Execute(fmt.Sprintf("DROP STREAM %sEXPLODE",streamOriginalName))
 				return
-			} else{
-				glog.Info("Second Stream created")
-				tableAnomalyDetectionQuery:= fmt.Sprintf("CREATE TABLE %sTABLEANOMALY3SECONDS AS SELECT N,COUNT(*) AS TOTAL " +
-					"FROM %sEXPLODE WINDOW TUMBLING (SIZE %d SECONDS) GROUP BY N  HAVING COUNT(*) >%d;",streamOriginalName,streamOriginalName,20,3)
-				err = ksql_utils.ExecuteStatement(tableAnomalyDetectionQuery)
-				if err!=nil{
-					glog.Error(err)
-					clientKSQL.Execute(fmt.Sprintf("DROP STREAM %sEXPLODE",streamOriginalName))
-					return
-				} else {
-					glog.Info("Table anomaly created")
-				}
+			} else {
+				glog.Info("Table anomaly created")
 			}
 		}
 	}
 
 }
-func WorkerKafkaConsumerAnomalyTable(idworker string, topic string,brokers utils.Broker,groupidKafka string, ks chan string,wg *sync.WaitGroup)  {
+func WorkerKafkaConsumerAnomalyTable(idworker string, topic string,brokers utils.Broker,groupidKafka string, ks chan string,wg *sync.WaitGroup,db *sql.DB)  {
 	defer wg.Done()
 	glog.Info(idworker + " Running....")
 	cm := kafka.ConfigMap{
@@ -242,11 +241,20 @@ func WorkerKafkaConsumerAnomalyTable(idworker string, topic string,brokers utils
 						//fmt.Println("Key: "+string(km.Key)+" | "+string(km.Value))
 						keyTable:=fmt.Sprintf("%q",km.Key)
 						key:=strings.TrimSpace(keyTable[1:strings.Index(keyTable,"\\")])
+						arrKey:=strings.Split(key,"_")
 						//fmt.Println(keyTable,strings.Index(keyTable,"\\"))
 						//fmt.Printf("Keyqq:             %s\n", km.Key)
+						var resultTotalLogs models.ResultAnomalyKSQL
+						json.Unmarshal(km.Value,&resultTotalLogs)
 						fmt.Print("DeviceID:",key)
 						fmt.Print(" | ")
 						fmt.Println("Number request:",string(km.Value))
+						fmt.Println("Number request:",resultTotalLogs.TOTAL)
+						now := time.Now()
+						var lastInsertID string
+						err:=db.QueryRow("INSERT INTO public.anomaly_result(id, config_id, channel_id, device_id, total_logs, type_anomaly, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7);",
+							uuid.NewString(),arrKey[1],arrKey[2],arrKey[0],resultTotalLogs.TOTAL,1, now.Unix()).Scan(&lastInsertID)
+						glog.Info(err)
 					}
 				}
 			}

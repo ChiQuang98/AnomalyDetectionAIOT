@@ -2,12 +2,15 @@ package main
 
 import (
 	"AnomalyDetection/routers"
+	"AnomalyDetection/services/postgresdb_utils"
+	"AnomalyDetection/utils"
 	"AnomalyDetection/utils/setting"
 	"AnomalyDetection/workers"
 	"flag"
 	"fmt"
 	"github.com/codegangsta/negroni"
 	"github.com/golang/glog"
+	_ "github.com/lib/pq"
 	"github.com/nats-io/nats.go"
 	"github.com/rmoff/ksqldb-go"
 	"github.com/rs/cors"
@@ -51,21 +54,28 @@ func main() {
 	flag.Parse()
 	glog.Info("Init Redis database...")
 	wg:=workers.GetWaitGroup()
-	//ip,err := utils.ResolveHostIp()
-	//if err !=nil{
-	//	return
-	//}
-	//var groupIDKafka = 	fmt.Sprintf("AnomalyLogsGroup_%s",ip)
-	//hosts := []string{"10.16.150.138", "10.16.150.139", "10.16.150.140"}
-	//brokers:=utils.SetBroker(hosts,9002)
+	ip,err := utils.ResolveHostIp()
+	if err !=nil{
+		glog.Error(err)
+		return
+	}
+	var groupIDKafka = 	fmt.Sprintf("AnomalyLogsGroup_%s",ip)
+	hosts := []string{"10.16.150.138", "10.16.150.139", "10.16.150.140"}
+	brokers:=utils.SetBroker(hosts,9002)
 	//servers := []string{"aiot-app01:31422", "aiot-app02:31422", "aiot-app03:31422"}
 	//servers := []string{"10.16.150.138:31422", "10.16.150.139:31422", "10.16.150.140:31422"}
 	nc, err := nats.Connect(setting.GetNatsInfo().Host,nats.ErrorHandler(natsErrHandler),nats.PingInterval(20*time.Second), nats.MaxPingsOutstanding(5))
 	clientKSQL := ksqldb.NewClient(fmt.Sprintf("http://%s",setting.GetKSQLInfo().Host),"","")
 	if err != nil {
 		glog.Error(err)
+		return
 	} else {
 		glog.Info(fmt.Sprintf("Connected to Nats Cluster Server at %s","10.16.150.138,139,140:4222"))
+	}
+	db,err:=postgresdb_utils.SetupDB()
+	if err!=nil{
+		glog.Error(err)
+		return
 	}
 	e:=nc.Flush()
 	if e!=nil{
@@ -78,30 +88,29 @@ func main() {
 	result := workers.GetResultChannel()
 	//killsignalKafka := workers.GetKillSignalChannelKafka()
 	killsignalNats:= workers.GetKillSignalChannelNats()
-	//killsignalKafkafconsumerAnomaly:= workers.GetKillSignalKafkaConsumerAnomaly()
+	killsignalKafkafconsumerAnomaly:= workers.GetKillSignalKafkaConsumerAnomaly()
 	fmt.Println("Start")
-	wg.Add(1)
+	wg.Add(2)
+	go workers.WorkerCreateStreamKSQL("AnomalyTopic1",clientKSQL,&wg)
+	go workers.WorkerKafkaConsumerAnomalyTable("ANOMALYTOPIC1TABLEANOMALY3SECONDS","ANOMALYTOPIC1TABLEANOMALY3SECONDS",
+		brokers,groupIDKafka,killsignalKafkafconsumerAnomaly,&wg,db)
 	go func() {
 		for{
 			select {
 			case job:= <- jobs:
-				wg.Add(2)
+				wg.Add(1)
 				go func() {
 					for _,channelTopic:= range job.ChannelID{
-						wg.Add(3)
+						wg.Add(1)
 						//topicAnomalyTable:=fmt.Sprintf("%sTABLEANOMALY3SECONDS",strings.ReplaceAll(strings.ToUpper(channelTopic),"-",""))
 						go workers.WorkerNats(job.ID,channelTopic, channelTopic, result,nc,killsignalNats,&wg,clientKSQL)
 						//go workers.WorkerKafkaProducer(channelTopic,result,killsignalKafka,&wg)
 						//go workers.WorkerKafkaConsumerAnomalyTable(topicAnomalyTable,topicAnomalyTable,brokers,groupIDKafka,killsignalKafkafconsumerAnomaly,&wg)
 					}
-					//go workers.WorkerCreateStreamKSQL(job,clientKSQL,&wg)
 				}()
 
 			}
 		}
-		//for job:= range jobs{
-		//
-		//}
 	}()
 	routerApi := routers.InitRoutes()
 	nApi := negroni.Classic()

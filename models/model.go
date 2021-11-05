@@ -21,7 +21,10 @@ type SenML struct {
 	U string `json:"u"`
 	V json.Number `json:"v"`
 	T json.Number `json:"t"`
-	BN string `json:"bn"`
+	//BN string `json:"bn"`
+}
+type ResultAnomalyKSQL struct {
+	TOTAL int64 `json:"total"`
 }
 type StreamsProperties struct {
 	KSQLOffsetReset string `json:"ksql.streams.auto.offset.reset"`
